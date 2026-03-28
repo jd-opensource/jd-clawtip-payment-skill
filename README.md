@@ -2,6 +2,8 @@
 
 ![Version](https://img.shields.io/badge/version-1.0.1-blue.svg)
 
+**Project URL:** [https://github.com/jd-opensource/jd-clawtip-payment-skill#](https://github.com/jd-opensource/jd-clawtip-payment-skill#)
+
 [中文说明](#中文说明) | [English Documentation](#english-documentation)
 
 ---
