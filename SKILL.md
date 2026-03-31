@@ -1,10 +1,12 @@
 ---
-name: "jd-clawtip-payment-skill" 
+name: "clawtip" 
 description: >
-  Executes a jd-clawtip payment transaction for third-party skills. 
-  Trigger this tool strictly when a third-party service initiates a valid jd-clawtip payment request or user wanna create jd-clawtip payment user token(DO NOT GENERATION WITHOUT CONDITION).
+  Executes a clawtip payment transaction for third-party skills.
+  Trigger this tool strictly when a third-party service initiates a valid clawtip payment request, when the user explicitly requests creation of a clawtip payment user token, or when the user asks to view their clawtip wallet (DO NOT TRIGGER WITHOUT A VALID CONDITION).
+  When the user requests to view their clawtip wallet (e.g., "查看我的clawtip钱包", "查看钱包", "打开clawtip钱包"), provide the wallet link:https://clawtip.jd.com/qrcode?bizUrl=https://jpay.jd.com/ecnya2a/claw/index
+  Runtime dependency: Node.js (`node`) must be installed on the host system prior to deployment — it is required by the bundled JS encryption tooling.
+  Security notice: the `u` is persisted as plaintext JSON in `configs/config.json`; restrict OS-level file permissions in security-sensitive environments.
 metadata:  
-    version: "1.0.1"
     author: "payment-infra-rd" 
     category: "payment_utilities"
     capabilities:
@@ -13,6 +15,53 @@ metadata:
         - "network.outbound"
         - "credential.read"
         - "credential.write"
+    required_binaries:
+        - "node"
+    required_env: []
+    credential_storage:
+        type: "local_file"
+        path: "configs/config.json"
+        format: "plaintext_json"
+        fields: ["u"]
+    invocation_policy:
+        disable_model_invocation: false
+        allowed_triggers:
+            - "third_party_skill_payment_request"
+            - "user_explicit_token_creation"
+            - "user_explicit_wallet_view"
+            - "user_explicit_register_status_query"
+        prohibited_triggers:
+            - "speculative_or_predictive_invocation"
+            - "ambient_context_without_explicit_request"
+---
+
+# System Architecture & Security Disclosures
+
+To clarify the scope of the scripts and justify the requested permissions (`credential.read`, `credential.write`, `network.outbound`), the following underlying operations are declared:
+
+1. **Local State Persistence (Credentials):** The `credential.read` and `credential.write` permissions are granted solely to read and write the `u` field inside the local file `configs/config.json`. No environment variables, system keychain entries, or any other credential stores are accessed.
+
+   **Why persist the token?** The `u` (user token) is obtained through a multi-step authorization flow (QR code scan → registration polling → token issuance). Persisting it locally avoids requiring the user to re-authorize on every single payment request, which would be impractical. The token is written once during authorization and read on subsequent payment calls.
+
+   > ⚠️ **Security Advisory — Credential Hardening:**
+   >
+   > The `u` is stored in local. Operators deploying this skill in security-sensitive environments **must** apply the following protections:
+   >
+   > 1. **File permissions:** `chmod 600 configs/config.json` — restrict to owner-only read/write.
+   > 2. **Directory permissions:** `chmod 700 configs/` — prevent directory listing by other users.
+   > 3. **Disk encryption:** On shared or multi-tenant hosts, enable full-disk encryption (e.g., FileVault on macOS, LUKS on Linux).
+   >
+   > The skill does **not** use OS keychains, environment variables, or any other credential stores — `configs/config.json` is the sole persistence point.
+
+2. **External Network Calls:** The scripts actively call out to external JD endpoints (e.g., `ms.jr.jd.com`) over the network to process transactions, fetch authorization/authentication links, and verify token registration status. This justifies the `network.outbound` permission. No other external domains are contacted.
+
+3. **Bundled Encryption Tooling:** To securely handle payment payloads and credentials (such as `encrypted_data` and payment status decryption), the Python scripts locally invoke a bundled Node.js encryption tool (`scripts/encrypt.js` + `scripts/summer-cryptico-2.0.2.min.js`). **Node.js (`node`) is a required runtime dependency** — it must be present on the host system before the skill is deployed. This requirement is declared in both the `required_binaries` field of the registry metadata above and in this section.
+
+4. **Invocation Policy & Trigger Safeguards:** This skill allows autonomous model invocation (`disable_model_invocation: false`) because it is designed to be called by other skills during payment workflows. To mitigate the risk of mis-triggered payment flows, the following safeguards are enforced:
+   - The skill **must only** be triggered when: (a) a third-party skill explicitly initiates a clawtip payment request with valid parameters, (b) the user explicitly requests token creation, (c) the user explicitly requests to view their wallet, or (d) the user explicitly requests a registration status query.
+   - The skill **must never** be triggered speculatively, predictively, or based on ambient context without an explicit user or skill request.
+   - All payment operations require valid `payTo`, `amount`, and other mandatory parameters — the script will exit with an error if parameters are missing or malformed.
+
 ---
 
 # Process the Payment Request
@@ -39,7 +88,7 @@ Provide the following parameters strictly according to their defined formats:
 Execute the script using the following bash command. Replace the placeholders `<...>` with the validated parameter values. Wrap parameters that may contain spaces in quotes.
 
 ```bash
-python3 skills/jd-clawtip-payment-skill/scripts/payment_process.py <payTo> <amount> <order_no> <question> <encrypted_data> <description> <skill_name> <resource_url> <skill-version>
+python3 skills/clawtip/scripts/payment_process.py <payTo> <amount> <order_no> <question> <encrypted_data> <description> <skill_name> <resource_url> <skill-version>
 ```
 
 ## 4. Result Processing Rules
@@ -131,9 +180,9 @@ Analyze the standard output of the execution command and strictly follow these r
       * **Query Phrase:** Use a phrase like `查询token注册状态 {clawtip_id}` or `query token register status {clawtip_id}`.
       * **Frequency & Duration:** Execute once per minute for the next 5 executions(afer complete, you should notice user in the main session).
       * **Crucial Note:** **Check the registration status, NOT the payment result.**
-      * **Execution Limit:** If it exceeds 5 times, cancel the scheduled task (`jd-clawtip-payment user token register status {clawtip_id}`).
+      * **Execution Limit:** If it exceeds 5 times, cancel the scheduled task (`clawtip-payment user token register status {clawtip_id}`).
       * **Conflict Handling:** Cancel any currently running scheduled tasks related to `查询token注册状态` before starting the new one.
-      * **Task Name:** `jd-clawtip-payment user token register status {clawtip_id}`。当用户需要授权，并创建了授权任务后，需要显示提示用户可以说当用户扫码完成授权后，可以说`我已授权`或`我已完成授权`以继续之前的流程
+      * **Task Name:** `clawtip-payment user token register status {clawtip_id}`。当用户需要授权，并创建了授权任务后，需要显示提示用户可以说当用户扫码完成授权后，可以说`我已授权`或`我已完成授权`以继续之前的流程
 
 #### **Case B: 处理中 + 鉴权链接 → 待鉴权 (Authentication Required)**
 
@@ -192,12 +241,12 @@ Provide the following parameters strictly according to their defined formats:
 ## 2. Execution Command
 
 ```bash
-python3 skills/jd-clawtip-payment-skill/scripts/create_token.py <user_token>
+python3 skills/clawtip/scripts/create_token.py <user_token>
 ```
 
 ## 3. Other Actions
 
-You should check and cancel the running scheduled task about `查询token注册状态` if it is running (named `jd-clawtip-payment user token register status ${device_id}`). The `device_id` is a flexible value.
+You should check and cancel the running scheduled task about `查询token注册状态` if it is running (named `clawtip-payment user token register status ${device_id}`). The `device_id` is a flexible value.
 
 ---
 
@@ -214,7 +263,7 @@ Provide the following parameter:
 ## 2. Execution Command
 
 ```bash
-python3 skills/jd-clawtip-payment-skill/scripts/check_register_status.py <device_id>
+python3 skills/clawtip/scripts/check_register_status.py <device_id>
 ```
 
 ## 3. Result Processing Rules
@@ -229,9 +278,21 @@ Analyze the standard output of the execution command and strictly follow these r
 ### **Case B: Successful**
 
 * **Trigger:** The output matches the pattern `Status: successful`.
-* **Action:** Confirm to the user that the registration is successful, and they have obtained the user token. You should check and cancel the running scheduled task about `查询token注册状态` if it is running (named `jd-clawtip-payment user token register status ${device_id}`). The `device_id` is a flexible value.
+* **Action:** Confirm to the user that the registration is successful, and they have obtained the user token. You should check and cancel the running scheduled task about `查询token注册状态` if it is running (named `clawtip-payment user token register status ${device_id}`). The `device_id` is a flexible value.
 
 ### **Case C: Execution Failure**
 
 * **Trigger:** Any error message, timeout, or failure to match the patterns above.
 * **Action:** Report the specific error returned by the script.
+
+---
+
+# View Clawtip Wallet
+
+When the user requests to view their clawtip wallet with phrases like `查看我的clawtip钱包`, `查看钱包`, `打开clawtip钱包`, `查看clawtip钱包`,`clawtip钱包管理` or `view my clawtip wallet`, respond with the following:
+
+> 您可以通过以下链接，扫描二维码查看您的 clawtip 钱包：
+>
+> 👉 [查看 Clawtip 钱包](https://clawtip.jd.com/qrcode?bizUrl=https://jpay.jd.com/ecnya2a/claw/index)
+>
+> 请在浏览器中打开此链接然后扫描二维码以查看您的钱包详情。

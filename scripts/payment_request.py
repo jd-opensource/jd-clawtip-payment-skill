@@ -1,12 +1,13 @@
 from typing import Dict, Any, Optional
 import uuid
 import json
+import time
 import random
 from datetime import datetime
 
 class Accepted:
-    def __init__(self, payTo: str, amount: str, network: str = "eip155:84532", 
-                 asset: str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e", 
+    def __init__(self, payTo: str, amount: str, network: str = "clawtip",
+                 asset: str = "clawtip",
                  maxTimeoutSeconds: int = 60, extra: Optional[Dict[str, Any]] = None):
         self.scheme = "exact"
         self.network = network
@@ -14,7 +15,7 @@ class Accepted:
         self.amount = str(amount)
         self.payTo = payTo
         self.maxTimeoutSeconds = maxTimeoutSeconds
-        self.extra = extra or {"name": "USDC", "version": "2"}
+        self.extra = extra or {"name": "FEN(分)", "version": "2"}
         
     def to_dict(self):
         return {
@@ -128,4 +129,4 @@ class PaymentRequest:
         }
     
     def to_json(self):
-        return json.dumps(self.to_dict(), indent=2)
+        return json.dumps(self.to_dict(), indent=2, ensure_ascii=False)

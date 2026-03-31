@@ -12,12 +12,9 @@ def get_public_key():
     """
     从域名获取base64编码后公钥
     """
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    # api_url = "https://117.72.16.38/api/getPublicKey"
     api_url = "https://ms.jr.jd.com/gw2/generic/hyqy/h5/m/getSMPublicKey"
     try:
-        response = requests.post(api_url, timeout=10, verify=False)
+        response = requests.post(api_url, timeout=10)
         response.raise_for_status()
         try:
             result = response.json()
@@ -40,7 +37,7 @@ def query_register_status(device_id: str):
     request_time = "{:.0f}".format(now.timestamp() * 1000)
     sign_raw = request_no + request_time
 
-    # 获取公钥并使用 test2.js 对 sign 进行 RSA 加密
+    # 获取公钥并使用 encrypt.js 对 sign 进行 RSA 加密
     base64_pub_key = get_public_key()
     if not base64_pub_key:
         print("未能获取到公钥，无法加密 sign。")
@@ -48,7 +45,7 @@ def query_register_status(device_id: str):
 
     try:
         current_dir = Path(__file__).parent.absolute()
-        js_script_path = current_dir / 'test2.js'
+        js_script_path = current_dir / 'encrypt.js'
         result_sign = subprocess.run(
             ["node", str(js_script_path), sign_raw, base64_pub_key],
             capture_output=True,
@@ -56,7 +53,7 @@ def query_register_status(device_id: str):
             check=True
         )
         sign = result_sign.stdout.strip()
-        print("成功调用 test2.js 对 sign 进行了加密。")
+        print("成功调用 encrypt.js 对 sign 进行了加密。")
     except subprocess.CalledProcessError as e:
         print(f"调用加密脚本时失败: {e.stderr if hasattr(e, 'stderr') else e}")
         return False, None
@@ -64,7 +61,6 @@ def query_register_status(device_id: str):
         print(f"执行加密脚本时发生异常: {e}")
         return False, None
 
-    # url = f"https://117.72.16.38/api/createToken?userDeviceId={device_id}"
     url = f"https://ms.jr.jd.com/gw2/generic/hyqy/h5/m/queryToken"
 
     body = {
@@ -75,75 +71,65 @@ def query_register_status(device_id: str):
     headers = {"Content-Type": "application/json"}
 
     try:
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        response = requests.post(url, json=body, headers=headers, timeout=10, verify=False)
+        response = requests.post(url, json=body, headers=headers, timeout=10)
         response.raise_for_status()
         result = response.json()
-        result_data = result.get('resultData', {})
         if not result.get('success', False):
             print(f"API Error: {result.get('resultMsg', 'Unknown error')}")
             return False, result
-
+        result_data = result.get("resultData", {})
         if "status" in result_data and result_data["status"] == "PROCESSING":
             count = result_data.get("times", 0)
             print(f"Status: processing (count: {count})")
             return False, result
         elif "tokenInfo" in result_data:
-            user_pin = result_data.get("userPin", "")
             user_token = result_data.get("tokenInfo", "")
             print(f"Status: successful")
-            print(f"UserPin: {user_pin}")
-            print(f"UserToken: {user_token}")
             
             # Save the token to config
             save_token(user_token)
             return True, result
         else:
-            print(f"Unknown response format: {result}")
+            print("Unknown response format")
             return False, result
             
     except requests.exceptions.RequestException as e:
         print(f"Error querying API: {e}")
         return False, None
     except json.JSONDecodeError:
-        print(f"Error parsing JSON response: {response.text}")
+        print("Error parsing JSON response")
         return False, None
 
 def save_token(token: str):
     """
-    Save the obtained userToken to configs/config.json
+    Save the obtained u to configs/config.json
     """
     current_dir = Path(__file__).parent.absolute()
     parent_dir = current_dir.parent
     config_dir = parent_dir / 'configs'
-    config_file = config_dir / 'config.bin'
+    config_file = config_dir / 'config.json'
     
     config_dir.mkdir(exist_ok=True)
     
     config_data = {}
     if config_file.exists():
         try:
-            with open(config_file, 'rb') as f:
-                encoded_data = f.read()
-                config_data_str = base64.b64decode(encoded_data).decode('utf-8')
-                config_data = json.loads(config_data_str)
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config_data = json.load(f)
         except Exception:
             pass
             
-    config_data['userToken'] = token
+    config_data['u'] = token
     
     try:
-        config_data_str = json.dumps(config_data)
-        encoded_data = base64.b64encode(config_data_str.encode('utf-8'))
-        with open(config_file, 'wb') as f:
-            f.write(encoded_data)
-        print(f"Saved userToken to {config_file}")
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config_data, f, ensure_ascii=False)
+        print(f"Saved u")
     except Exception as e:
         print(f"Error saving config: {e}")
 
 if __name__ == "__main__":
-    device_id = "test_device"
+    device_id = "default"
     if len(sys.argv) > 1:
         device_id = sys.argv[1]
     
